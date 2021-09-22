@@ -13,7 +13,7 @@ from messages import Upload, Request
 from util import even_split
 from peer import Peer
 
-class Dummy(Peer):
+class MMJWStd(Peer):
     def post_init(self):
         print(("post_init(): %s here!" % self.id))
         self.dummy_state = dict()
@@ -60,12 +60,19 @@ class Dummy(Peer):
             # More symmetry breaking -- ask for random pieces.
             # This would be the place to try fancier piece-requesting strategies
             # to avoid getting the same thing from multiple peers at a time.
-            for piece_id in random.sample(isect, n):
+            piece_count={}
+            for piece_id in isect:
+                if piece_id in piece_count:
+                    piece_count[piece_id]+= 1
+                else:
+                    piece_count[piece_id]=1
+            rarest_first=sorted(piece_count.items(), key=lambda x:x[1])
+            for piece_id in rarest_first:
                 # aha! The peer has this piece! Request it.
                 # which part of the piece do we need next?
                 # (must get the next-needed blocks in order)
-                start_block = self.pieces[piece_id]
-                r = Request(self.id, peer.id, piece_id, start_block)
+                start_block = self.pieces[piece_id[0]]
+                r = Request(self.id, peer.id, piece_id[0], start_block)
                 requests.append(r)
 
         return requests
@@ -97,8 +104,9 @@ class Dummy(Peer):
             logging.debug("Still here: uploading to a random peer")
             # change my internal state for no reason
             self.dummy_state["cake"] = "pie"
-
-            request = random.choice(requests)
+            
+            requests.sort(key=history.peer_history(request.requester_id).uploads.upload_rate)
+            request = requests[0]
             chosen = [request.requester_id]
             # Evenly "split" my upload bandwidth among the one chosen requester
             bws = even_split(self.up_bw, len(chosen))
