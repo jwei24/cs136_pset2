@@ -104,10 +104,23 @@ class MMJWStd(Peer):
             logging.debug("Still here: uploading to a random peer")
             # change my internal state for no reason
             self.dummy_state["cake"] = "pie"
-            
-            requests.sort(key=history.peer_history(request.requester_id).uploads.upload_rate)
-            request = requests[0]
-            chosen = [request.requester_id]
+            if history.last_round == 0 or history.last_round == 1:
+                request = random.choice(requests)
+                chosen = [request.requester_id]
+            else:
+                reciprocate={}
+                requester_id_list = list(request.requester_id for request in requests)
+                for requester in requester_id_list:
+                    r_history = history.peer_history(requester)
+                    last_round_bw = list(x.bw for x in r_history.uploads[history.last_round()])
+                    last_round_avg_bw = sum(last_round_bw)/len(last_round_bw)
+                    second_last_round_bw = list(x.bw for x in r_history.uploads[history.last_round()-1])
+                    second_last_round_avg_bw = sum(second_last_round_bw)/len(second_last_round_bw)
+                    avg_bw = (last_round_avg_bw + second_last_round_avg_bw)/2
+                    reciprocate[requester] = avg_bw
+                
+                reciprocate_sorted=sorted(reciprocate.items(), key=lambda x:x[1], reverse=True)
+                chosen = reciprocate_sorted[0][0]
             # Evenly "split" my upload bandwidth among the one chosen requester
             bws = even_split(self.up_bw, len(chosen))
 
