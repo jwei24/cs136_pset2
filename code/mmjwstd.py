@@ -114,7 +114,7 @@ class MMJWStd(Peer):
             else:
                 requester_id_list = list(set(request.requester_id for request in requests))
                 requester_id_dict = {id: 0 for id in requester_id_list}
-                for i in range(round-2, round):
+                for i in range(round-3, round):
                     for download in history.downloads[i]:
                         pid = download.from_id
                         blockrate = download.blocks

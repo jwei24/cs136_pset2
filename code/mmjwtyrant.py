@@ -20,12 +20,13 @@ class MMJWTyrant(Peer):
         self.dummy_state["cake"] = "lie"
         self.gamma = .1
         self.r = 3
-        self.alpha = .2
+        self.alpha = .1
         self.d = {}
         self.u = {}
-        self.init_u = self.up_bw/4
-        self.init_d = self.up_bw/4
+        self.init_u = self.up_bw/8
+        self.init_d = self.up_bw/8
         self.record = {}
+        self.lastrequest=[]
     
     def requests(self, peers, history):
         """
@@ -84,7 +85,7 @@ class MMJWTyrant(Peer):
                 start_block = self.pieces[piece_id]
                 r = Request(self.id, peer.id, piece_id, start_block)
                 requests.append(r)
-
+        self.lastrequest=requests
         return requests
 
     def uploads(self, requests, peers, history):
@@ -114,24 +115,26 @@ class MMJWTyrant(Peer):
                 self.u[peer.id] = self.init_u
                 self.d[peer.id] = self.init_d
         else:
-            new_record = {}
+            newrecord={}
             for download in history.downloads[round-1]:
                 pid = download.from_id
                 self.d[pid] = download.blocks
                 if pid in self.record:
                     current = self.record[pid]
-                    if current == 0:
-                        new_record[pid] = 1
-                    elif current < self.r:
-                        new_record[pid] = self.record[pid] + 1
+                    if current < self.r:
+                        newrecord[pid] = current + 1
                     elif current == self.r:
-                        new_record[pid] = self.r
-                        self.u[pid] = self.u[pid]*(1-self.gamma)
-            for peer in peers:
-                if peer.id in new_record == False:
-                    new_record[peer.id] = 0
-                    self.u[peer.id] = self.u[peer.id]*(1+self.alpha)
-            self.record = new_record
+                        newrecord[pid] = self.r
+                        self.u[pid] *= (1-self.gamma)
+            
+            for request in self.lastrequest:
+                if (request.peer_id in newrecord) == False:
+                    newrecord[request.peer_id] = 0
+                    self.u[request.peer_id] *= (1+self.alpha)
+        
+            for pid in newrecord:
+                self.record[pid] = newrecord[pid]
+
         
         chosen = []
         bws = []
@@ -142,14 +145,14 @@ class MMJWTyrant(Peer):
             logging.debug("Still here: uploading to a random peer")
             # change my internal state for no reason
             self.dummy_state["cake"] = "pie"
-            # Check who unchoked me in the previous round
+
             requester_id_list = list(set(request.requester_id for request in requests))
             random.shuffle(requester_id_list)
             requester_rank = {}
             for rid in requester_id_list:
                 requester_rank[rid] = self.d[rid]/self.u[rid]
             requester_rank= sorted(requester_rank.items(), key=lambda x:x[1], reverse=True)
-            # Evenly "split" my upload bandwidth among the one chosen requester
+            # Allocate upload bandwidth
             bw_left = self.up_bw
             k=0
             while bw_left > 0 and len(requester_rank) > k:
