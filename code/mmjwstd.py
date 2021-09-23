@@ -18,6 +18,7 @@ class MMJWStd(Peer):
         print(("post_init(): %s here!" % self.id))
         self.dummy_state = dict()
         self.dummy_state["cake"] = "lie"
+        self.optunchoked = 0
     
     def requests(self, peers, history):
         """
@@ -67,12 +68,12 @@ class MMJWStd(Peer):
                 else:
                     piece_count[piece_id]=1
             rarest_first=sorted(piece_count.items(), key=lambda x:x[1])
-            for piece_id in rarest_first:
+            for piece_id, counts in rarest_first:
                 # aha! The peer has this piece! Request it.
                 # which part of the piece do we need next?
                 # (must get the next-needed blocks in order)
-                start_block = self.pieces[piece_id[0]]
-                r = Request(self.id, peer.id, piece_id[0], start_block)
+                start_block = self.pieces[piece_id]
+                r = Request(self.id, peer.id, piece_id, start_block)
                 requests.append(r)
 
         return requests
@@ -95,6 +96,7 @@ class MMJWStd(Peer):
         # For example, history.downloads[round-1] (if round != 0, of course)
         # has a list of Download objects for each Download to this peer in
         # the previous round.
+        chosen=[]
 
         if len(requests) == 0:
             logging.debug("No one wants my pieces!")
@@ -104,23 +106,45 @@ class MMJWStd(Peer):
             logging.debug("Still here: uploading to a random peer")
             # change my internal state for no reason
             self.dummy_state["cake"] = "pie"
-            if history.last_round == 0 or history.last_round == 1:
-                request = random.choice(requests)
-                chosen = [request.requester_id]
+            if round == 0 or round == 1:
+                rids = random.sample(requests, min(3, len(requests)))
+                chosen = [x.requester_id for x in rids]
             else:
-                reciprocate={}
-                requester_id_list = list(request.requester_id for request in requests)
-                for requester in requester_id_list:
-                    r_history = history.peer_history(requester)
-                    last_round_bw = list(x.bw for x in r_history.uploads[history.last_round()])
-                    last_round_avg_bw = sum(last_round_bw)/len(last_round_bw)
-                    second_last_round_bw = list(x.bw for x in r_history.uploads[history.last_round()-1])
-                    second_last_round_avg_bw = sum(second_last_round_bw)/len(second_last_round_bw)
-                    avg_bw = (last_round_avg_bw + second_last_round_avg_bw)/2
-                    reciprocate[requester] = avg_bw
-                
-                reciprocate_sorted=sorted(reciprocate.items(), key=lambda x:x[1], reverse=True)
-                chosen = reciprocate_sorted[0][0]
+                past_rates={}
+                requester_id_list = list(set(request.requester_id for request in requests))
+                for download in history.downloads[round-1]:
+                    pid = download.from_id
+                    blockrate = download.blocks
+                    if pid in past_rates:
+                        past_rates[pid] += blockrate
+                    else:
+                        past_rates[pid] = blockrate
+                for download in history.downloads[round-2]:
+                    pid = download.from_id
+                    blockrate = download.blocks
+                    if pid in past_rates:
+                        past_rates[pid] += blockrate
+                    else:
+                        past_rates[pid] = blockrate
+                past_rates_sorted = sorted(past_rates.items(), key=lambda x:x[1], reverse=True)
+                logging.debug("Past Rates Sorted")
+                logging.debug(str(past_rates_sorted))
+                for pid, blockrate in past_rates_sorted:
+                    if len(chosen) == 3:
+                        exit
+                    if pid in requester_id_list:
+                        chosen.append(pid)
+                    else:
+                        continue
+                if len(chosen) == 0:
+                    rids = random.sample(requests, min(3, len(requests)))
+                    chosen = [x.requester_id for x in rids]
+                if round%3==0:
+                    opt = random.choice(requests).requester_id
+                    chosen.append(opt)
+                    self.optunchoked=opt
+                else:
+                    chosen.append(self.optunchoked)
             # Evenly "split" my upload bandwidth among the one chosen requester
             bws = even_split(self.up_bw, len(chosen))
 
