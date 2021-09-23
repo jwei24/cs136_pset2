@@ -57,12 +57,14 @@ class MMJWStd(Peer):
         for peer in peers:
             av_set = set(peer.available_pieces)
             isect = av_set.intersection(np_set)
+            isect_list = list(isect)
+            random.shuffle(isect_list)
             n = min(self.max_requests, len(isect))
             # More symmetry breaking -- ask for random pieces.
             # This would be the place to try fancier piece-requesting strategies
             # to avoid getting the same thing from multiple peers at a time.
             piece_count={}
-            for piece_id in isect:
+            for piece_id in isect_list:
                 if piece_id in piece_count:
                     piece_count[piece_id]+= 1
                 else:
@@ -110,37 +112,29 @@ class MMJWStd(Peer):
                 rids = random.sample(requests, min(3, len(requests)))
                 chosen = [x.requester_id for x in rids]
             else:
-                past_rates={}
                 requester_id_list = list(set(request.requester_id for request in requests))
-                for download in history.downloads[round-1]:
-                    pid = download.from_id
-                    blockrate = download.blocks
-                    if pid in past_rates:
-                        past_rates[pid] += blockrate
-                    else:
-                        past_rates[pid] = blockrate
-                for download in history.downloads[round-2]:
-                    pid = download.from_id
-                    blockrate = download.blocks
-                    if pid in past_rates:
-                        past_rates[pid] += blockrate
-                    else:
-                        past_rates[pid] = blockrate
-                past_rates_sorted = sorted(past_rates.items(), key=lambda x:x[1], reverse=True)
-                logging.debug("Past Rates Sorted")
-                logging.debug(str(past_rates_sorted))
-                for pid, blockrate in past_rates_sorted:
+                requester_id_dict = {id: 0 for id in requester_id_list}
+                for i in range(round-2, round):
+                    for download in history.downloads[i]:
+                        pid = download.from_id
+                        blockrate = download.blocks
+                        if pid in requester_id_dict:
+                            requester_id_dict[pid] += blockrate
+
+                rid_dict_sorted = sorted(requester_id_dict.items(), key=lambda x:x[1], reverse=True)
+                for pid, blockrate in rid_dict_sorted:
                     if len(chosen) == 3:
                         exit
                     if pid in requester_id_list:
                         chosen.append(pid)
+                        requester_id_list.remove(pid)
                     else:
                         continue
                 if len(chosen) == 0:
-                    rids = random.sample(requests, min(3, len(requests)))
-                    chosen = [x.requester_id for x in rids]
-                if round%3==0:
-                    opt = random.choice(requests).requester_id
+                    rids = random.sample(requester_id_list, min(3, len(requester_id_list)))
+                    chosen = [x for x in rids]
+                if round%3==0 and len(requester_id_list) > 0:
+                    opt = random.sample(requester_id_list, 1)
                     chosen.append(opt)
                     self.optunchoked=opt
                 else:
