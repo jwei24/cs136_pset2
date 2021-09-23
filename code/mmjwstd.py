@@ -123,7 +123,7 @@ class MMJWStd(Peer):
 
                 rid_dict_sorted = sorted(requester_id_dict.items(), key=lambda x:x[1], reverse=True)
                 for pid, blockrate in rid_dict_sorted:
-                    if len(chosen) == 3:
+                    if len(chosen) == 3 or blockrate == 0:
                         exit
                     if pid in requester_id_list:
                         chosen.append(pid)
