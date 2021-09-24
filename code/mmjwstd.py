@@ -64,27 +64,28 @@ class MMJWStd(Peer):
         # (up to self.max_requests from each)
         piece_counts = {}
         for peer in peers:
-            av_set = set(peer.available_pieces)
-            isect = av_set.intersection(np_set)
-            n = min(self.max_requests, len(isect))
-            # More symmetry breaking -- ask for random pieces.
-            # This would be the place to try fancier piece-requesting strategies
-            # to avoid getting the same thing from multiple peers at a time.
-            for piece_id in list(isect):
+            for piece_id in peer.available_pieces:
                 if not piece_id in piece_counts:
                     piece_counts[piece_id] = 0
                 piece_counts[piece_id] += 1
         rarest_first = list(piece_counts.items())[:]
         random.shuffle(rarest_first)
         rarest_first = sorted(rarest_first, key = lambda x: x[1])
-        # logging.debug("Piece set for {} = {}".format(self.id, self.pieces))
         for peer in peers:
+            av_set = set(peer.available_pieces)
+            isect = av_set.intersection(np_set)
+            n = min(self.max_requests, len(isect))
+
+            # More symmetry breaking -- ask for random pieces.
+            # This would be the place to try fancier piece-requesting strategies
+            # to avoid getting the same thing from multiple peers at a time.
             cur_len = 0
-            for piece_id, _counts in rarest_first:
+            cur_rarest = list(isect)
+            random.shuffle(cur_rarest)
+            cur_rarest.sort(key = lambda x: piece_counts[x])
+            for piece_id in cur_rarest:
                 if cur_len >= self.max_requests:
                     break
-                if not piece_id in peer.available_pieces:
-                    continue
                 # aha! The peer has this piece! Request it.
                 # which part of the piece do we need next?
                 # (must get the next-needed blocks in order)
