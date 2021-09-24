@@ -18,7 +18,15 @@ class MMJWStd(Peer):
         print(("post_init(): %s here!" % self.id))
         self.dummy_state = dict()
         self.dummy_state["cake"] = "lie"
-        self.optunchoked = 0
+
+        # Constants
+        self.NUM_SLOTS = 4
+        self.LOOKBACK_CNT = 2
+        self.NO_UNCHOKED = -1 # ID's should be strings so this hopefully works
+
+        # Unchoking
+        self.optunchoked = self.NO_UNCHOKED
+        self.choke_turn_cntr = 0
     
     def requests(self, peers, history):
         """
@@ -54,29 +62,36 @@ class MMJWStd(Peer):
         peers.sort(key=lambda p: p.id)
         # request all available pieces from all peers!
         # (up to self.max_requests from each)
+        piece_counts = {}
         for peer in peers:
             av_set = set(peer.available_pieces)
             isect = av_set.intersection(np_set)
-            isect_list = list(isect)
-            random.shuffle(isect_list)
             n = min(self.max_requests, len(isect))
             # More symmetry breaking -- ask for random pieces.
             # This would be the place to try fancier piece-requesting strategies
             # to avoid getting the same thing from multiple peers at a time.
-            piece_count={}
-            for piece_id in isect_list:
-                if piece_id in piece_count:
-                    piece_count[piece_id]+= 1
-                else:
-                    piece_count[piece_id]=1
-            rarest_first=sorted(piece_count.items(), key=lambda x:x[1])
-            for piece_id, counts in rarest_first:
+            for piece_id in list(isect):
+                if not piece_id in piece_counts:
+                    piece_counts[piece_id] = 0
+                piece_counts[piece_id] += 1
+        rarest_first = list(piece_counts.items())[:]
+        random.shuffle(rarest_first)
+        rarest_first = sorted(rarest_first, key = lambda x: x[1])
+        # logging.debug("Piece set for {} = {}".format(self.id, self.pieces))
+        for peer in peers:
+            cur_len = 0
+            for piece_id, _counts in rarest_first:
+                if cur_len >= self.max_requests:
+                    break
+                if not piece_id in peer.available_pieces:
+                    continue
                 # aha! The peer has this piece! Request it.
                 # which part of the piece do we need next?
                 # (must get the next-needed blocks in order)
                 start_block = self.pieces[piece_id]
                 r = Request(self.id, peer.id, piece_id, start_block)
                 requests.append(r)
+                cur_len += 1
 
         return requests
 
@@ -91,14 +106,23 @@ class MMJWStd(Peer):
         In each round, this will be called after requests().
         """
 
-        round = history.current_round()
+        round_num = history.current_round()
         logging.debug("%s again.  It's round %d." % (
-            self.id, round))
+            self.id, round_num))
         # One could look at other stuff in the history too here.
         # For example, history.downloads[round-1] (if round != 0, of course)
         # has a list of Download objects for each Download to this peer in
         # the previous round.
         chosen=[]
+
+        ###################
+        # Specs for std:
+        # - Every time period, unchoke 3 peers from which it has recently
+        #   achieved the highest bandwidth
+        # - Every 3 time periods, optimistically unchoke another, random peer
+        #   from the neighborhood, and leave this peer unchocked for three
+        #   time periods
+        ###################
 
         if len(requests) == 0:
             logging.debug("No one wants my pieces!")
@@ -108,39 +132,55 @@ class MMJWStd(Peer):
             logging.debug("Still here: uploading to a random peer")
             # change my internal state for no reason
             self.dummy_state["cake"] = "pie"
-            if round == 0 or round == 1:
-                rids = random.sample(requests, min(3, len(requests)))
-                chosen = [x.requester_id for x in rids]
-            else:
-                requester_id_list = list(set(request.requester_id for request in requests))
-                requester_id_dict = {id: 0 for id in requester_id_list}
-                for i in range(round-3, round):
-                    for download in history.downloads[i]:
-                        pid = download.from_id
-                        blockrate = download.blocks
-                        if pid in requester_id_dict:
-                            requester_id_dict[pid] += blockrate
+            
+            cur_req_ids = list(set(map(lambda x: x.requester_id, requests)))
+            prev_rnd_bw = dict(zip(cur_req_ids, [0] * len(cur_req_ids)))
 
-                rid_dict_sorted = sorted(requester_id_dict.items(), key=lambda x:x[1], reverse=True)
-                for pid, blockrate in rid_dict_sorted:
-                    if len(chosen) == 3 or blockrate == 0:
-                        exit
-                    if pid in requester_id_list:
-                        chosen.append(pid)
-                        requester_id_list.remove(pid)
-                    else:
+            for i in range(max(0, round_num - self.LOOKBACK_CNT), round_num):
+                for dl_obj in history.downloads[i]:
+                    if not dl_obj.from_id in prev_rnd_bw:
                         continue
-                if len(chosen) == 0:
-                    rids = random.sample(requester_id_list, min(3, len(requester_id_list)))
-                    chosen = [x for x in rids]
-                if round%3==0 and len(requester_id_list) > 0:
-                    opt = random.sample(requester_id_list, 1)
-                    chosen.append(opt)
-                    self.optunchoked=opt
+                    prev_rnd_bw[dl_obj.from_id] += dl_obj.blocks
+            candidates = list(prev_rnd_bw.items())
+            random.shuffle(candidates)
+            candidates.sort(key = lambda x: x[1], reverse=True)
+
+            unchoked_requesting = False
+            if self.optunchoked != self.NO_UNCHOKED and\
+                    self.optunchoked in prev_rnd_bw:
+                unchoked_requesting = True
+                candidates.remove((self.optunchoked,\
+                                    prev_rnd_bw[self.optunchoked]))
+            ## Take top NUM_SLOTS - 1, leave last for unchoking.
+            if len(candidates) <= self.NUM_SLOTS - 1:
+                chosen, remaining = candidates[:len(candidates)], []
+            else:
+                chosen = candidates[:self.NUM_SLOTS-1]
+                remaining = candidates[self.NUM_SLOTS-1:]
+            chosen = list(map(lambda x: x[0], chosen))
+            remaining = list(map(lambda x: x[0], remaining))
+            
+            if self.choke_turn_cntr == 0 or\
+                    self.optunchoked == self.NO_UNCHOKED or\
+                    not unchoked_requesting:
+                # time to unchoke based on turn count OR
+                # prev rnd no unchoke, choke this round
+                self.choke_turn_cntr = 0
+                if len(remaining) == 0:
+                    pass
                 else:
+                    self.optunchoked = random.choice(remaining)
                     chosen.append(self.optunchoked)
-            # Evenly "split" my upload bandwidth among the one chosen requester
-            bws = even_split(self.up_bw, len(chosen))
+                    self.choke_turn_cntr += 1
+                    self.choke_turn_cntr %= 3
+            else:
+                chosen.append(self.optunchoked)
+                self.choke_turn_cntr += 1
+                self.choke_turn_cntr %= 3
+
+            bws = []
+            if len(chosen) > 0:
+                bws = even_split(self.up_bw, len(chosen))
 
         # create actual uploads out of the list of peer ids and bandwidths
         uploads = [Upload(self.id, peer_id, bw)
