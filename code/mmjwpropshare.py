@@ -76,10 +76,7 @@ class MMJWPropshare(Peer):
             for piece_id, _counts in rarest_first:
                 if cur_len >= self.max_requests:
                     break
-                av_set = set(peer.available_pieces)
-                isect = av_set.intersection(np_set)
-                isect_list = list(isect)
-                if not piece_id in isect_list:
+                if not piece_id in peer.available_pieces:
                     continue
                 # aha! The peer has this piece! Request it.
                 # which part of the piece do we need next?
@@ -124,43 +121,43 @@ class MMJWPropshare(Peer):
 
             # check previous round for who we downloaded from
             prev_round_dt = history.downloads[round_num - 1]
-            prev_rnd_ids = []
-            block_sizes = []
+            prev_rnd_bw = {} # id |-> total size
             for dl_obj in prev_round_dt:
-                prev_rnd_ids.append(dl_obj.from_id)
-                block_sizes.append(dl_obj.blocks)
-            prev_rnd_bw = dict(zip(prev_rnd_ids, block_sizes))
+                if not dl_obj.from_id in prev_rnd_bw:
+                    prev_rnd_bw[dl_obj.from_id] = 0
+                prev_rnd_bw[dl_obj.from_id] += dl_obj.blocks
             
-            chosen_req = [] # stores which ones were in prev round
-            chosen_bws = []
+            chosen_req_bw = {} # dict id -> total bw from prev. round
             optim_candidates = [] # for optimistic unchoking
             for cur_req in requests:
-                if cur_req.requester_id in prev_rnd_ids:
-                    chosen_req.append(cur_req.requester_id)
-                    chosen_bws.append(prev_rnd_bw[cur_req.requester_id])
+                if cur_req.requester_id in prev_rnd_bw:
+                    chosen_req_bw[cur_req.requester_id] = 0
                 else:
                     optim_candidates.append(cur_req.requester_id)
+            tot_bws = 0
+            for req_id in chosen_req_bw.keys():
+                chosen_req_bw[req_id] += prev_rnd_bw[req_id]
+                tot_bws += prev_rnd_bw[req_id]
 
-            tot_bws = sum(chosen_bws)
             # So we're supposed to floor these (source: Ed PS2 Megathread)
             adjusted_bws_sum = 0
             if len(optim_candidates) == 0:
                 OPTIM_UNCHOKE_RATIO = 0
-            for i in range(len(chosen_bws)):
-                chosen_bws[i] *= self.up_bw * (1 - OPTIM_UNCHOKE_RATIO)
-                chosen_bws[i] /= tot_bws
-                chosen_bws[i] = floor(chosen_bws[i])
-                adjusted_bws_sum += chosen_bws[i]
+            for i in chosen_req_bw.keys():
+                chosen_req_bw[i] *= self.up_bw * (1 - OPTIM_UNCHOKE_RATIO)
+                chosen_req_bw[i] /= tot_bws
+                chosen_req_bw[i] = floor(chosen_req_bw[i])
+                adjusted_bws_sum += chosen_req_bw[i]
             if len(optim_candidates) > 0:
-                chosen_req.append(random.choice(optim_candidates))
-                chosen_bws.append(floor(self.up_bw * OPTIM_UNCHOKE_RATIO))
-                adjusted_bws_sum += chosen_bws[-1]
+                optim_id = random.choice(optim_candidates)
+                chosen_req_bw[optim_id] = floor(self.up_bw * OPTIM_UNCHOKE_RATIO)
+                adjusted_bws_sum += chosen_req_bw[optim_id]
             rem = self.up_bw - adjusted_bws_sum
-            for i in random.choices(range(len(chosen_bws)), k = max(0, rem)):
-                chosen_bws[i] += 1
+            for i in random.choices(list(chosen_req_bw.keys()), k = max(0, rem)):
+                chosen_req_bw[i] += 1
 
-            chosen = chosen_req
-            bws = chosen_bws
+            chosen = chosen_req_bw.keys()
+            bws = chosen_req_bw.values()
 
         # create actual uploads out of the list of peer ids and bandwidths
         uploads = [Upload(self.id, peer_id, bw)
