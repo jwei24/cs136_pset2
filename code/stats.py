@@ -44,8 +44,8 @@ class Stats:
         d = Stats.completion_rounds(peer_ids, history)
 
         k = lambda id: d[id]
-        return "\n".join("%s: %s" % (id, d[id])
-                         for id in sorted(list(d.keys()), key=d.__getitem__))
+        return "\n".join("%s: %s" % (id, v or 0)
+                         for id, v in sorted(d.items(), key = lambda kv: kv[1] or 0))
 
     @staticmethod
     def all_done_round(peer_ids, history):

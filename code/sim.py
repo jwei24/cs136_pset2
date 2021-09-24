@@ -383,7 +383,7 @@ class Sim:
         opt_stddev = optionize(stddev)
         
         for p_id in sorted(self.peer_ids,
-                           key=lambda id: opt_mean(completion_by_id[id])):
+                           key=lambda id: opt_mean(completion_by_id[id]) or 0):
             cs = completion_by_id[p_id]
             logging.warning("%s: %s  (%s)" % (p_id, opt_mean(cs), opt_stddev(cs)))
 
